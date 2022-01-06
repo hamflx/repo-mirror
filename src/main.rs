@@ -9,7 +9,7 @@ use git2::{
     build::RepoBuilder, Cred, CredentialType, FetchOptions, PushOptions, RemoteCallbacks,
     Repository,
 };
-use log::{info, warn};
+use log::{info, trace, warn};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -143,9 +143,10 @@ fn do_sync(
             .collect();
         let push_refspecs = origin_heads
             .iter()
-            .map(|s| format!("{}:{}", s, s))
+            .map(|s| format!("+{}:{}", s, s))
             .collect::<Vec<_>>();
 
+        trace!("Pushing refs `{:?}`", push_refspecs);
         remote_mirror.push(push_refspecs.as_slice(), Some(push_opts))?;
 
         repo.remote_delete("mirror")?;
