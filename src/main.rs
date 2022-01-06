@@ -33,7 +33,7 @@ fn main() {
     loop {
         if let Err(err) = do_sync(
             &repos,
-            mirrors_dir,
+            mirrors_dir.as_str(),
             &mut builder,
             &mut fetch_opts,
             &mut push_opts,
@@ -46,9 +46,10 @@ fn main() {
     }
 }
 
-fn read_sync_repos() -> (&'static str, Vec<SyncRepository>) {
-    let mirrors_dir = r#"D:\tmp\mirrors"#;
-    fs::create_dir_all(mirrors_dir).unwrap();
+fn read_sync_repos() -> (String, Vec<SyncRepository>) {
+    let temp_dir = std::env::temp_dir().join("repo_mirror");
+    let mirrors_dir = temp_dir.to_str().unwrap().to_owned();
+    fs::create_dir_all(&mirrors_dir).unwrap();
     let repos: Vec<SyncRepository> = serde_json::from_str(
         str::from_utf8(&fs::read("repos.json").expect("无法读取 repos.json"))
             .expect("文件内容不是有效的 utf8 格式"),
