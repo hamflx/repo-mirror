@@ -7,7 +7,6 @@ RUN cargo init . --name bootstrap
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 COPY .cargo ./.cargo
-RUN ls -al /app
 RUN cargo build --release
 COPY src /app/src
 RUN touch src/main.rs && cargo build --release

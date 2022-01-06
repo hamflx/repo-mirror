@@ -4,6 +4,7 @@ use std::{env, fs, path::Path};
 use std::{str, thread};
 
 use anyhow::{anyhow, Result};
+use clap::Parser;
 use env_logger::Env;
 use git2::{
     build::RepoBuilder, Cred, CredentialType, FetchOptions, PushOptions, RemoteCallbacks,
@@ -23,12 +24,21 @@ struct KnownHosts {
     pub hosts: HashSet<String>,
 }
 
+#[derive(Parser)]
+struct Cli {
+    #[clap(short, long)]
+    trust: bool,
+}
+
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
+    let args = Cli::parse();
+
     let (mirrors_dir, repos) = read_sync_repos();
     let known_hosts = KnownHosts::load().unwrap_or_else(|_| KnownHosts::new());
-    let (mut fetch_opts, mut push_opts, mut builder) = new_git_network_opts(known_hosts);
+    let (mut fetch_opts, mut push_opts, mut builder) =
+        new_git_network_opts(known_hosts, args.trust);
 
     loop {
         if let Err(err) = do_sync(
@@ -37,8 +47,14 @@ fn main() {
             &mut builder,
             &mut fetch_opts,
             &mut push_opts,
+            args.trust,
+            Duration::from_secs(60),
         ) {
             warn!("An error occurred: {}", err);
+        }
+
+        if args.trust {
+            break;
         }
 
         info!("waiting for next tick");
@@ -63,12 +79,17 @@ fn read_sync_repos() -> (String, Vec<SyncRepository>) {
 
 fn new_git_network_opts<'cb>(
     mut known_hosts: KnownHosts,
+    always_trust: bool,
 ) -> (FetchOptions<'cb>, PushOptions<'cb>, RepoBuilder<'cb>) {
     let mut clone_callbacks = RemoteCallbacks::new();
     let mut clone_opts = FetchOptions::new();
     clone_callbacks.credentials(get_credentials);
     clone_callbacks.certificate_check(move |cert, host| {
         let host_key = base64::encode(cert.as_hostkey().unwrap().hash_sha256().unwrap());
+        if always_trust {
+            known_hosts.push(host_key).unwrap();
+            return true;
+        }
         if known_hosts.check(&host_key) {
             return true;
         }
@@ -113,6 +134,8 @@ fn do_sync(
     builder: &mut RepoBuilder,
     fetch_opts: &mut FetchOptions,
     push_opts: &mut PushOptions,
+    clone_only: bool,
+    duration: Duration,
 ) -> Result<()> {
     for sync_repo in repos {
         let repo_name = sync_repo
@@ -129,6 +152,10 @@ fn do_sync(
         } else {
             (*builder).clone(sync_repo.source.as_str(), repo_dir_path)?
         };
+        if clone_only {
+            continue;
+        }
+
         let mut remote_origin = repo.find_remote("origin")?;
         let mut remote_mirror = repo
             .find_remote("mirror")
@@ -151,6 +178,10 @@ fn do_sync(
         remote_mirror.push(push_refspecs.as_slice(), Some(push_opts))?;
 
         repo.remote_delete("mirror")?;
+
+        if !duration.is_zero() {
+            thread::sleep(duration);
+        }
     }
 
     Ok(())
