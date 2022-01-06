@@ -1,6 +1,8 @@
+use std::collections::HashSet;
 use std::str;
 use std::{env, fs, path::Path};
 
+use anyhow::Result;
 use git2::{
     build::RepoBuilder, Cred, CredentialType, FetchOptions, PushOptions, RemoteCallbacks,
     Repository,
@@ -11,6 +13,11 @@ use serde::{Deserialize, Serialize};
 struct SyncRepository {
     pub source: String,
     pub mirror: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct KnownHosts {
+    pub hosts: HashSet<String>,
 }
 
 fn main() {
@@ -26,9 +33,32 @@ fn main() {
         panic!("未找到有效的仓库配置项");
     }
 
+    let mut known_hosts = KnownHosts::load().unwrap_or_else(|_| KnownHosts::new());
+
     let mut clone_callbacks = RemoteCallbacks::new();
     let mut clone_opts = FetchOptions::new();
     clone_callbacks.credentials(get_credentials);
+    clone_callbacks.certificate_check(|cert, host| {
+        let host_key = base64::encode(cert.as_hostkey().unwrap().hash_sha256().unwrap());
+        if known_hosts.check(&host_key) {
+            return true;
+        }
+
+        println!(
+            "Host {} key is: {}",
+            host,
+            base64::encode(cert.as_hostkey().unwrap().hash_sha256().unwrap()),
+        );
+        println!("Do you trust?");
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap();
+        if input.trim().to_lowercase() == "y" {
+            known_hosts.push(host_key).unwrap();
+            return true;
+        }
+        false
+    });
     clone_opts.remote_callbacks(clone_callbacks);
 
     let mut fetch_callbacks = RemoteCallbacks::new();
@@ -45,7 +75,7 @@ fn main() {
     builder.fetch_options(clone_opts);
     builder.bare(true);
 
-    for sync_repo in repos {
+    for sync_repo in &repos {
         let repo_name = sync_repo.source.split('/').last().unwrap();
         let repo_dir_path_buf = Path::new(mirrors_dir).join(repo_name);
         let repo_dir_path = repo_dir_path_buf.as_path();
@@ -101,4 +131,28 @@ fn get_credentials(
         )),
         None,
     )
+}
+
+impl KnownHosts {
+    pub fn load() -> Result<Self> {
+        Ok(serde_json::from_str(str::from_utf8(&fs::read(
+            "known_hosts.json",
+        )?)?)?)
+    }
+
+    pub fn new() -> Self {
+        KnownHosts {
+            hosts: HashSet::new(),
+        }
+    }
+
+    pub fn check(&self, key: &String) -> bool {
+        self.hosts.contains(key)
+    }
+
+    pub fn push(&mut self, key: String) -> Result<()> {
+        self.hosts.insert(key);
+        let content = serde_json::to_string(self)?;
+        Ok(fs::write("known_hosts.json", content)?)
+    }
 }
