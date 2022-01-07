@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 use std::{env, fs, path::Path};
 use std::{str, thread};
@@ -6,6 +7,7 @@ use std::{str, thread};
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use env_logger::Env;
+use git2::Remote;
 use git2::{
     build::RepoBuilder, Cred, CredentialType, FetchOptions, PushOptions, RemoteCallbacks,
     Repository,
@@ -21,7 +23,7 @@ struct SyncRepository {
 
 #[derive(Serialize, Deserialize)]
 struct KnownHosts {
-    pub hosts: HashSet<String>,
+    pub hosts: HashMap<String, String>,
 }
 
 #[derive(Parser)]
@@ -37,8 +39,25 @@ fn main() {
 
     let (mirrors_dir, repos) = read_sync_repos();
     let known_hosts = KnownHosts::load().unwrap_or_else(|_| KnownHosts::new());
+    let known_hosts_mutex = Mutex::new(known_hosts);
     let (mut fetch_opts, mut push_opts, mut builder) =
-        new_git_network_opts(known_hosts, args.trust);
+        new_git_network_opts(&known_hosts_mutex, args.trust);
+
+    if args.trust {
+        for sync_repo in &repos {
+            let auth_source = new_auth_callbacks(&known_hosts_mutex, true);
+            let auth_mirror = new_auth_callbacks(&known_hosts_mutex, true);
+            let mut source = Remote::create_detached(sync_repo.source.as_str()).unwrap();
+            let mut mirror = Remote::create_detached(sync_repo.mirror.as_str()).unwrap();
+            source
+                .connect_auth(git2::Direction::Fetch, Some(auth_source), None)
+                .unwrap();
+            mirror
+                .connect_auth(git2::Direction::Push, Some(auth_mirror), None)
+                .unwrap();
+        }
+        return;
+    }
 
     loop {
         if let Err(err) = do_sync(
@@ -47,17 +66,12 @@ fn main() {
             &mut builder,
             &mut fetch_opts,
             &mut push_opts,
-            args.trust,
             Duration::from_secs(60),
         ) {
             warn!("An error occurred: {}", err);
         }
 
-        if args.trust {
-            break;
-        }
-
-        info!("waiting for next tick");
+        info!("Waiting for next tick");
         thread::sleep(Duration::from_secs(30 * 60));
     }
 }
@@ -77,43 +91,42 @@ fn read_sync_repos() -> (String, Vec<SyncRepository>) {
     (mirrors_dir, repos)
 }
 
-fn new_git_network_opts<'cb>(
-    mut known_hosts: KnownHosts,
-    always_trust: bool,
-) -> (FetchOptions<'cb>, PushOptions<'cb>, RepoBuilder<'cb>) {
+fn new_auth_callbacks(known_hosts: &Mutex<KnownHosts>, always_trust: bool) -> RemoteCallbacks {
     let mut clone_callbacks = RemoteCallbacks::new();
-    let mut clone_opts = FetchOptions::new();
     clone_callbacks.credentials(get_credentials);
     clone_callbacks.certificate_check(move |cert, host| {
         let host_key = base64::encode(cert.as_hostkey().unwrap().hash_sha256().unwrap());
+        let mut kh = known_hosts.lock().unwrap();
         if always_trust {
-            known_hosts.push(host_key).unwrap();
+            kh.push(host.to_string(), host_key).unwrap();
             return true;
         }
-        if known_hosts.check(&host_key) {
+        if kh.check(&host.to_string(), &host_key) {
             return true;
         }
-
-        println!(
-            "Host {} key is: {}",
-            host,
-            base64::encode(cert.as_hostkey().unwrap().hash_sha256().unwrap()),
-        );
         println!("Do you trust?");
 
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).unwrap();
         if input.trim().to_lowercase() == "y" {
-            known_hosts.push(host_key).unwrap();
+            kh.push(host.to_string(), host_key).unwrap();
             return true;
         }
         false
     });
+    clone_callbacks
+}
+
+fn new_git_network_opts(
+    known_hosts: &Mutex<KnownHosts>,
+    always_trust: bool,
+) -> (FetchOptions, PushOptions, RepoBuilder) {
+    let clone_callbacks = new_auth_callbacks(known_hosts, always_trust);
+    let mut clone_opts = FetchOptions::new();
     clone_opts.remote_callbacks(clone_callbacks);
 
-    let mut fetch_callbacks = RemoteCallbacks::new();
+    let fetch_callbacks = new_auth_callbacks(known_hosts, always_trust);
     let mut fetch_opts = FetchOptions::new();
-    fetch_callbacks.credentials(get_credentials);
     fetch_opts.remote_callbacks(fetch_callbacks);
 
     let mut push_callbacks = RemoteCallbacks::new();
@@ -134,7 +147,6 @@ fn do_sync(
     builder: &mut RepoBuilder,
     fetch_opts: &mut FetchOptions,
     push_opts: &mut PushOptions,
-    clone_only: bool,
     duration: Duration,
 ) -> Result<()> {
     for sync_repo in repos {
@@ -143,7 +155,7 @@ fn do_sync(
             .split('/')
             .last()
             .ok_or_else(|| anyhow!("仓库地址应为非空字符串"))?;
-        info!("syncing {}", repo_name);
+        info!("Syncing {}", repo_name);
 
         let repo_dir_path_buf = Path::new(mirrors_dir).join(repo_name);
         let repo_dir_path = repo_dir_path_buf.as_path();
@@ -152,10 +164,6 @@ fn do_sync(
         } else {
             (*builder).clone(sync_repo.source.as_str(), repo_dir_path)?
         };
-        if clone_only {
-            continue;
-        }
-
         let mut remote_origin = repo.find_remote("origin")?;
         let mut remote_mirror = repo
             .find_remote("mirror")
@@ -178,6 +186,7 @@ fn do_sync(
         remote_mirror.push(push_refspecs.as_slice(), Some(push_opts))?;
 
         repo.remote_delete("mirror")?;
+        info!("Sync [{}] successfully", repo_name);
 
         if !duration.is_zero() {
             thread::sleep(duration);
@@ -214,16 +223,17 @@ impl KnownHosts {
 
     pub fn new() -> Self {
         KnownHosts {
-            hosts: HashSet::new(),
+            hosts: HashMap::new(),
         }
     }
 
-    pub fn check(&self, key: &String) -> bool {
-        self.hosts.contains(key)
+    pub fn check(&self, host: &String, key: &String) -> bool {
+        self.hosts.get(host) == Some(key)
     }
 
-    pub fn push(&mut self, key: String) -> Result<()> {
-        self.hosts.insert(key);
+    pub fn push(&mut self, host: String, key: String) -> Result<()> {
+        info!("Trust host {}:{}", host, key);
+        self.hosts.insert(host, key);
         let content = serde_json::to_string(self)?;
         Ok(fs::write("known_hosts.json", content)?)
     }
