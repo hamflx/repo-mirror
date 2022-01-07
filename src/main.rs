@@ -30,15 +30,24 @@ struct KnownHosts {
 struct Cli {
     #[clap(short, long)]
     trust: bool,
+
+    #[clap(short, long)]
+    print: bool,
+
+    #[clap(short, long)]
+    silence: bool,
 }
 
 fn main() {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
-
     let args = Cli::parse();
+    let default_level = if args.silence { "error" } else { "info" };
+    env_logger::Builder::from_env(Env::default().default_filter_or(default_level)).init();
 
     let (mirrors_dir, repos) = read_sync_repos();
-    let known_hosts = KnownHosts::load().unwrap_or_else(|_| KnownHosts::new());
+    let known_hosts = KnownHosts::load().unwrap_or_else(|err| {
+        info!("Failed to loading known_hosts.json, using empty. {}", err);
+        KnownHosts::new()
+    });
     let known_hosts_mutex = Mutex::new(known_hosts);
     let (mut fetch_opts, mut push_opts, mut builder) =
         new_git_network_opts(&known_hosts_mutex, args.trust);
@@ -55,6 +64,10 @@ fn main() {
             mirror
                 .connect_auth(git2::Direction::Push, Some(auth_mirror), None)
                 .unwrap();
+        }
+        if args.print {
+            let kh = known_hosts_mutex.lock().unwrap();
+            println!("{}", kh.serialize());
         }
         return;
     }
@@ -104,6 +117,8 @@ fn new_auth_callbacks(known_hosts: &Mutex<KnownHosts>, always_trust: bool) -> Re
         if kh.check(&host.to_string(), &host_key) {
             return true;
         }
+
+        println!("Host {} key is: {}", host, host_key);
         println!("Do you trust?");
 
         let mut input = String::new();
@@ -236,5 +251,9 @@ impl KnownHosts {
         self.hosts.insert(host, key);
         let content = serde_json::to_string(self)?;
         Ok(fs::write("known_hosts.json", content)?)
+    }
+
+    pub fn serialize(&self) -> String {
+        serde_json::to_string(self).unwrap()
     }
 }

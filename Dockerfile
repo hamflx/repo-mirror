@@ -19,4 +19,4 @@ RUN apk add libgcc \
 WORKDIR /app
 COPY --from=build /app/target/release/repo-mirror /app/repo-mirror
 COPY repos.json /app
-CMD /app/repo-mirror
+ENTRYPOINT ["/app/repo-mirror"]
