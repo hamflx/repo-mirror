@@ -85,7 +85,7 @@ fn main() {
         }
 
         info!("Waiting for next tick");
-        thread::sleep(Duration::from_secs(30 * 60));
+        thread::sleep(Duration::from_secs(60 * 60));
     }
 }
 
