@@ -170,7 +170,7 @@ fn do_sync(
             .split('/')
             .last()
             .ok_or_else(|| anyhow!("仓库地址应为非空字符串"))?;
-        info!("Syncing {}", repo_name);
+        info!("[{}] Start syncing ...", repo_name);
 
         let repo_dir_path_buf = Path::new(mirrors_dir).join(repo_name);
         let repo_dir_path = repo_dir_path_buf.as_path();
@@ -201,7 +201,7 @@ fn do_sync(
         remote_mirror.push(push_refspecs.as_slice(), Some(push_opts))?;
 
         repo.remote_delete("mirror")?;
-        info!("Sync [{}] successfully", repo_name);
+        info!("[{}] Done.", repo_name);
 
         if !duration.is_zero() {
             thread::sleep(duration);
