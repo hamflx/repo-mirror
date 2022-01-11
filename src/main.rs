@@ -53,16 +53,22 @@ fn main() {
         new_git_network_opts(&known_hosts_mutex, args.trust);
 
     if args.trust {
-        for sync_repo in &repos {
-            let auth_source = new_auth_callbacks(&known_hosts_mutex, true);
-            let auth_mirror = new_auth_callbacks(&known_hosts_mutex, true);
-            let mut source = Remote::create_detached(sync_repo.source.as_str()).unwrap();
-            let mut mirror = Remote::create_detached(sync_repo.mirror.as_str()).unwrap();
-            source
-                .connect_auth(git2::Direction::Fetch, Some(auth_source), None)
-                .unwrap();
-            mirror
-                .connect_auth(git2::Direction::Push, Some(auth_mirror), None)
+        let remotes = repos
+            .iter()
+            .fold(Vec::new(), |mut list, item| {
+                let source_url = item.source.split(':').next().unwrap();
+                list.push((source_url, item.source.as_str()));
+                let mirror_url = item.mirror.split(':').next().unwrap();
+                list.push((mirror_url, item.mirror.as_str()));
+                list
+            })
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        for (_, remote_url) in remotes {
+            let auth_cb = new_auth_callbacks(&known_hosts_mutex, true);
+            let mut remote = Remote::create_detached(remote_url).unwrap();
+            remote
+                .connect_auth(git2::Direction::Fetch, Some(auth_cb), None)
                 .unwrap();
         }
         if args.print {
