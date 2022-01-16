@@ -1,3 +1,5 @@
+mod server;
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -6,14 +8,13 @@ use std::{str, thread};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use env_logger::Env;
 use git2::Remote;
 use git2::{
     build::RepoBuilder, Cred, CredentialType, FetchOptions, PushOptions, RemoteCallbacks,
     Repository,
 };
-use log::{info, trace, warn};
 use serde::{Deserialize, Serialize};
+use tracing::{info, trace, warn};
 
 #[derive(Serialize, Deserialize)]
 struct SyncRepository {
@@ -36,12 +37,19 @@ struct Cli {
 
     #[clap(short, long)]
     silence: bool,
+
+    #[clap(long)]
+    server: bool,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
+    if std::env::var_os("RUST_LOG").is_none() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+    tracing_subscriber::fmt::init();
+
     let args = Cli::parse();
-    let default_level = if args.silence { "error" } else { "info" };
-    env_logger::Builder::from_env(Env::default().default_filter_or(default_level)).init();
 
     let (mirrors_dir, repos) = read_sync_repos();
     let known_hosts = KnownHosts::load().unwrap_or_else(|err| {
@@ -76,6 +84,13 @@ fn main() {
             println!("{}", kh.serialize());
         }
         return;
+    }
+
+    if args.server {
+        tokio::task::spawn(async {
+            let server = server::RepoMirrorConfigServer::new();
+            server.run().await.unwrap();
+        });
     }
 
     loop {
