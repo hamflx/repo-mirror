@@ -33,7 +33,7 @@ impl RepoMirrorConfigServer {
                     .nest("/swagger", ui)
                     .nest(
                         "/",
-                        StaticFilesEndpoint::new("public").index_file("index.html"),
+                        StaticFilesEndpoint::new("ui/build").index_file("index.html"),
                     ),
             )
             .await?;
