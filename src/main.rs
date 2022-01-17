@@ -1,3 +1,4 @@
+mod repos;
 mod server;
 
 use std::collections::HashMap;
@@ -15,12 +16,6 @@ use git2::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, trace, warn};
-
-#[derive(Serialize, Deserialize)]
-struct SyncRepository {
-    pub source: String,
-    pub mirror: String,
-}
 
 #[derive(Serialize, Deserialize)]
 struct KnownHosts {
@@ -51,7 +46,7 @@ async fn main() {
 
     let args = Cli::parse();
 
-    let (mirrors_dir, repos) = read_sync_repos();
+    let (mirrors_dir, repos) = repos::read_sync_repos();
     let known_hosts = KnownHosts::load().unwrap_or_else(|err| {
         info!("Failed to loading known_hosts.json, using empty. {}", err);
         KnownHosts::new()
@@ -110,21 +105,6 @@ async fn main() {
     }
 }
 
-fn read_sync_repos() -> (String, Vec<SyncRepository>) {
-    let temp_dir = std::env::temp_dir().join("repo_mirror");
-    let mirrors_dir = temp_dir.to_str().unwrap().to_owned();
-    fs::create_dir_all(&mirrors_dir).unwrap();
-    let repos: Vec<SyncRepository> = serde_json::from_str(
-        str::from_utf8(&fs::read("repos.json").expect("无法读取 repos.json"))
-            .expect("文件内容不是有效的 utf8 格式"),
-    )
-    .expect("解析 json 格式失败");
-    if repos.is_empty() {
-        panic!("未找到有效的仓库配置项");
-    }
-    (mirrors_dir, repos)
-}
-
 fn new_auth_callbacks(known_hosts: &Mutex<KnownHosts>, always_trust: bool) -> RemoteCallbacks {
     let mut clone_callbacks = RemoteCallbacks::new();
     clone_callbacks.credentials(get_credentials);
@@ -178,7 +158,7 @@ fn new_git_network_opts(
 }
 
 fn do_sync(
-    repos: &Vec<SyncRepository>,
+    repos: &Vec<repos::SyncRepository>,
     mirrors_dir: &str,
     builder: &mut RepoBuilder,
     fetch_opts: &mut FetchOptions,

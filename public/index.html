@@ -7,6 +7,44 @@
   <title>repo mirror</title>
 </head>
 <body>
-  This is repo mirror.
+  <div id="root"></div>
+
+  <script crossorigin src="https://unpkg.com/react@17/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+  <script type="text/babel">
+    const useAsyncEffect = fn => {
+      React.useEffect(() => {
+        fn()
+      })
+    }
+    function App () {
+      const [repos, setRepos] = React.useState([])
+      useAsyncEffect(async () => {
+        setRepos(await (await fetch('/api/repos')).json())
+      })
+      const items = repos.map(repo => {
+        return (
+          <div style={{display: 'flex', padding: '20px 0', borderBottom: '1px solid #ccc'}} key={repo.source}>
+            <div style={{width: '500px'}}>{repo.source}</div>
+            <div style={{width: '500px'}}>{repo.mirror}</div>
+          </div>
+        )
+      })
+      return (
+        <div>
+          {items}
+        </div>
+      )
+    }
+
+    function bootstrap () {
+      const root = document.getElementById('root')
+      ReactDOM.render(React.createElement(App), root)
+    }
+
+    bootstrap()
+  </script>
 </body>
 </html>
