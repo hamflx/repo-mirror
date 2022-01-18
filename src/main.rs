@@ -35,6 +35,9 @@ struct Cli {
 
     #[clap(long)]
     server: bool,
+
+    #[clap(long)]
+    only_server: bool,
 }
 
 #[tokio::main]
@@ -82,10 +85,14 @@ async fn main() {
     }
 
     if args.server {
-        tokio::task::spawn(async {
+        let server = tokio::task::spawn(async {
             let server = server::RepoMirrorConfigServer::new();
             server.run().await.unwrap();
         });
+        if args.only_server {
+            server.await.unwrap();
+            return;
+        }
     }
 
     loop {
