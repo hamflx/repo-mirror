@@ -1,3 +1,4 @@
+use anyhow::Result;
 use poem_openapi::Object;
 use serde::{Deserialize, Serialize};
 
@@ -16,8 +17,10 @@ pub fn read_sync_repos() -> (String, Vec<SyncRepository>) {
             .expect("文件内容不是有效的 utf8 格式"),
     )
     .expect("解析 json 格式失败");
-    if repos.is_empty() {
-        panic!("未找到有效的仓库配置项");
-    }
     (mirrors_dir, repos)
+}
+
+pub fn write_sync_repos(repos: &Vec<SyncRepository>) -> Result<()> {
+    std::fs::write("repos.json", serde_json::to_string(repos)?)?;
+    Ok(())
 }

@@ -59,6 +59,9 @@ async fn main() {
         new_git_network_opts(&known_hosts_mutex, args.trust);
 
     if args.trust {
+        if repos.is_empty() {
+            panic!("未找到有效的仓库配置项");
+        }
         let remotes = repos
             .iter()
             .fold(Vec::new(), |mut list, item| {
@@ -96,6 +99,9 @@ async fn main() {
     }
 
     loop {
+        if repos.is_empty() {
+            panic!("未找到有效的仓库配置项");
+        }
         if let Err(err) = do_sync(
             &repos,
             mirrors_dir.as_str(),
