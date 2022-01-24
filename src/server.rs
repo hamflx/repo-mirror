@@ -109,7 +109,7 @@ impl RepoMirrorConfigServer {
             OpenApiService::new(Api, "Hello World", "1.0").server("http://localhost:5000/api");
         let ui = api_service.swagger_ui();
 
-        Server::new(TcpListener::bind("127.0.0.1:5000"))
+        Server::new(TcpListener::bind("0.0.0.0:5000"))
             .run(
                 Route::new()
                     .nest("/api", api_service)

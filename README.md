@@ -7,5 +7,5 @@
 ```powershell
 docker build -t hamflx/repo-mirror .
 docker run -it --rm -v $env:USERPROFILE\.ssh:/root/.ssh:ro hamflx/repo-mirror -t -p -s >known_hosts.json
-docker run -it --rm -v $env:USERPROFILE\.ssh:/root/.ssh:ro -v $PWD\known_hosts.json:/app/known_hosts.json hamflx/repo-mirror
+docker run -it --rm -v $env:USERPROFILE\.ssh:/root/.ssh:ro -v $PWD\known_hosts.json:/app/known_hosts.json -p 5000:5000 hamflx/repo-mirror --server
 ```
