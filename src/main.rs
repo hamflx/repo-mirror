@@ -38,6 +38,9 @@ struct Cli {
 
     #[clap(long)]
     only_server: bool,
+
+    #[clap(long)]
+    bare: bool,
 }
 
 #[tokio::main]
@@ -56,7 +59,7 @@ async fn main() {
     });
     let known_hosts_mutex = Mutex::new(known_hosts);
     let (mut fetch_opts, mut push_opts, mut builder) =
-        new_git_network_opts(&known_hosts_mutex, args.trust);
+        new_git_network_opts(&known_hosts_mutex, args.trust, args.bare);
 
     if args.trust {
         if repos.is_empty() {
@@ -67,8 +70,10 @@ async fn main() {
             .fold(Vec::new(), |mut list, item| {
                 let source_url = item.source.split(':').next().unwrap();
                 list.push((source_url, item.source.as_str()));
-                let mirror_url = item.mirror.split(':').next().unwrap();
-                list.push((mirror_url, item.mirror.as_str()));
+                if let Some(mirror) = &item.mirror {
+                    let mirror_url = mirror.split(':').next().unwrap();
+                    list.push((mirror_url, mirror.as_str()));
+                }
                 list
             })
             .into_iter()
@@ -109,6 +114,7 @@ async fn main() {
             &mut fetch_opts,
             &mut push_opts,
             Duration::from_secs(60),
+            !args.bare,
         ) {
             warn!("An error occurred: {}", err);
         }
@@ -149,6 +155,7 @@ fn new_auth_callbacks(known_hosts: &Mutex<KnownHosts>, always_trust: bool) -> Re
 fn new_git_network_opts(
     known_hosts: &Mutex<KnownHosts>,
     always_trust: bool,
+    bare: bool,
 ) -> (FetchOptions, PushOptions, RepoBuilder) {
     let clone_callbacks = new_auth_callbacks(known_hosts, always_trust);
     let mut clone_opts = FetchOptions::new();
@@ -165,18 +172,19 @@ fn new_git_network_opts(
 
     let mut builder = RepoBuilder::new();
     builder.fetch_options(clone_opts);
-    builder.bare(true);
+    builder.bare(bare);
 
     (fetch_opts, push_opts, builder)
 }
 
 fn do_sync(
-    repos: &Vec<repos::SyncRepository>,
+    repos: &[repos::SyncRepository],
     mirrors_dir: &str,
     builder: &mut RepoBuilder,
     fetch_opts: &mut FetchOptions,
     push_opts: &mut PushOptions,
     duration: Duration,
+    remove_trailing_git: bool,
 ) -> Result<()> {
     for sync_repo in repos {
         let repo_name = sync_repo
@@ -184,6 +192,11 @@ fn do_sync(
             .split('/')
             .last()
             .ok_or_else(|| anyhow!("仓库地址应为非空字符串"))?;
+        let repo_name = if remove_trailing_git && repo_name.ends_with(".git") {
+            repo_name.get(0..(repo_name.len() - 4)).unwrap_or(repo_name)
+        } else {
+            repo_name
+        };
         info!("[{}] Start syncing ...", repo_name);
 
         let repo_dir_path_buf = Path::new(mirrors_dir).join(repo_name);
@@ -194,27 +207,31 @@ fn do_sync(
             (*builder).clone(sync_repo.source.as_str(), repo_dir_path)?
         };
         let mut remote_origin = repo.find_remote("origin")?;
-        let mut remote_mirror = repo
-            .find_remote("mirror")
-            .or_else(|_| repo.remote("mirror", sync_repo.mirror.as_str()))?;
 
+        trace!("Fetching refs latest for {}", repo_name);
         remote_origin.fetch(&["+refs/heads/*:refs/heads/*"], Some(fetch_opts), None)?;
 
-        let origin_refs = remote_origin.list()?;
-        let origin_heads: Vec<_> = origin_refs
-            .iter()
-            .filter(|s| s.name().starts_with("refs/heads/"))
-            .map(|r| r.name())
-            .collect();
-        let push_refspecs = origin_heads
-            .iter()
-            .map(|s| format!("+{}:{}", s, s))
-            .collect::<Vec<_>>();
+        if let Some(mirror) = sync_repo.mirror.as_ref() {
+            let origin_refs = remote_origin.list()?;
+            let origin_heads: Vec<_> = origin_refs
+                .iter()
+                .filter(|s| s.name().starts_with("refs/heads/"))
+                .map(|r| r.name())
+                .collect();
+            let mut remote_mirror = repo
+                .find_remote("mirror")
+                .or_else(|_| repo.remote("mirror", mirror))?;
+            let push_refspecs = origin_heads
+                .iter()
+                .map(|s| format!("+{}:{}", s, s))
+                .collect::<Vec<_>>();
 
-        trace!("Pushing refs `{:?}`", push_refspecs);
-        remote_mirror.push(push_refspecs.as_slice(), Some(push_opts))?;
+            trace!("Pushing refs `{:?}`", push_refspecs);
+            remote_mirror.push(push_refspecs.as_slice(), Some(push_opts))?;
 
-        repo.remote_delete("mirror")?;
+            repo.remote_delete("mirror")?;
+        }
+
         info!("[{}] Done.", repo_name);
 
         if !duration.is_zero() {
@@ -256,8 +273,8 @@ impl KnownHosts {
         }
     }
 
-    pub fn check(&self, host: &String, key: &String) -> bool {
-        self.hosts.get(host) == Some(key)
+    pub fn check(&self, host: &str, key: &str) -> bool {
+        self.hosts.get(host).map(|s| s.as_str()) == Some(key)
     }
 
     pub fn push(&mut self, host: String, key: String) -> Result<()> {

@@ -19,10 +19,13 @@ impl PropertySetter<String> for SyncRepository {
                 self.source = value;
             }
             "mirror" => {
-                if self.mirror != old {
-                    return Err(anyhow!("Old value mismatch {} != {}", self.mirror, old));
+                if let Some(mirror) = self.mirror.as_ref() {
+                    if mirror == &old {
+                        self.mirror = Some(value);
+                        return Ok(());
+                    }
                 }
-                self.mirror = value;
+                return Err(anyhow!("Old value mismatch {:?} != {}", self.mirror, old));
             }
             _ => return Err(anyhow!("Invalid field name")),
         };
@@ -91,7 +94,7 @@ impl Api {
         let (_, mut repos) = read_sync_repos();
         repos.push(SyncRepository {
             source: String::new(),
-            mirror: String::new(),
+            mirror: Some(String::new()),
         });
         write_sync_repos(&repos).unwrap();
     }
