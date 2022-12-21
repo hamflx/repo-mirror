@@ -1,5 +1,5 @@
 FROM ubuntu:20.04
-DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 ENV LC_ALL=C.UTF-8
 RUN apt-get update && apt-get install -y apt-utils apt-transport-https
 RUN apt-get install -y \
