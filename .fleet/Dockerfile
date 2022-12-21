@@ -9,3 +9,4 @@ RUN apt-get install -y \
   git \
   && rm -rf /var/lib/apt/lists/*
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -q -y
+ENV PATH "$PATH:/root/.cargo/bin"
